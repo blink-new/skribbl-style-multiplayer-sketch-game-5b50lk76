@@ -1,6 +1,6 @@
 import { Button } from './ui/button'
 import { Badge } from './ui/badge'
-import { Clock, Users, LogOut } from 'lucide-react'
+import { Clock, Users, LogOut, Star, Zap, Trophy, Shield } from 'lucide-react'
 
 interface GameHeaderProps {
   roomCode: string
@@ -8,6 +8,9 @@ interface GameHeaderProps {
   maxRounds: number
   timeLeft: number
   gameState: 'waiting' | 'playing' | 'finished'
+  difficulty?: string
+  teamMode?: boolean
+  customWords?: boolean
   onLeaveRoom: () => void
 }
 
@@ -17,6 +20,9 @@ export function GameHeader({
   maxRounds, 
   timeLeft, 
   gameState,
+  difficulty = 'medium',
+  teamMode = false,
+  customWords = false,
   onLeaveRoom 
 }: GameHeaderProps) {
   const formatTime = (seconds: number) => {
@@ -29,6 +35,28 @@ export function GameHeader({
     if (timeLeft > 30) return 'text-green-600'
     if (timeLeft > 10) return 'text-yellow-600'
     return 'text-red-600'
+  }
+
+  const getDifficultyIcon = () => {
+    switch (difficulty) {
+      case 'easy':
+        return <Star className="h-3 w-3" />
+      case 'hard':
+        return <Trophy className="h-3 w-3" />
+      default:
+        return <Zap className="h-3 w-3" />
+    }
+  }
+
+  const getDifficultyColor = () => {
+    switch (difficulty) {
+      case 'easy':
+        return 'bg-green-100 text-green-800 border-green-200'
+      case 'hard':
+        return 'bg-red-100 text-red-800 border-red-200'
+      default:
+        return 'bg-yellow-100 text-yellow-800 border-yellow-200'
+    }
   }
 
   return (
@@ -44,8 +72,32 @@ export function GameHeader({
           </Badge>
         </div>
 
-        {/* Center: Game Status */}
-        <div className="flex items-center gap-6">
+        {/* Center: Game Status & Settings */}
+        <div className="flex items-center gap-4">
+          {/* Game Settings */}
+          <div className="flex items-center gap-2">
+            {/* Difficulty */}
+            <Badge className={`text-xs flex items-center gap-1 ${getDifficultyColor()}`}>
+              {getDifficultyIcon()}
+              {difficulty}
+            </Badge>
+
+            {/* Team Mode */}
+            {teamMode && (
+              <Badge className="text-xs flex items-center gap-1 bg-purple-100 text-purple-800 border-purple-200">
+                <Shield className="h-3 w-3" />
+                Teams
+              </Badge>
+            )}
+
+            {/* Custom Words */}
+            {customWords && (
+              <Badge className="text-xs bg-blue-100 text-blue-800 border-blue-200">
+                Custom
+              </Badge>
+            )}
+          </div>
+
           {/* Round Counter */}
           <div className="flex items-center gap-2">
             <Users className="h-4 w-4 text-muted-foreground" />

@@ -51,17 +51,28 @@ export function GameRoom({ roomCode, onLeaveRoom }: GameRoomProps) {
 
   const getRandomWord = useCallback(async (): Promise<string> => {
     try {
-      const words = await blink.db.wordLists.list({ 
-        limit: 100,
-        orderBy: { id: 'asc' }
+      // Check if room has custom words
+      if (room?.customWords) {
+        const customWordList = room.customWords.split(',')
+        return customWordList[Math.floor(Math.random() * customWordList.length)]
+      }
+
+      // Get words based on difficulty
+      const categories = await blink.db.wordCategories.list({
+        where: { difficulty: room?.difficulty || 'medium' }
       })
-      if (words.length === 0) return 'cat' // fallback
-      return words[Math.floor(Math.random() * words.length)].word
+      
+      if (categories.length === 0) return 'cat' // fallback
+      
+      // Pick random category and word
+      const randomCategory = categories[Math.floor(Math.random() * categories.length)]
+      const words = randomCategory.words.split(',')
+      return words[Math.floor(Math.random() * words.length)]
     } catch (error) {
       console.error('Error getting random word:', error)
       return 'cat' // fallback
     }
-  }, [])
+  }, [room?.customWords, room?.difficulty])
 
   const startTimer = useCallback((duration: number) => {
     if (timerRef.current) clearInterval(timerRef.current)
@@ -377,6 +388,9 @@ export function GameRoom({ roomCode, onLeaveRoom }: GameRoomProps) {
         maxRounds={room.maxRounds}
         timeLeft={timeLeft}
         gameState={room.gameState}
+        difficulty={room.difficulty}
+        teamMode={room.teamMode}
+        customWords={!!room.customWords}
         onLeaveRoom={onLeaveRoom}
       />
 
@@ -388,6 +402,7 @@ export function GameRoom({ roomCode, onLeaveRoom }: GameRoomProps) {
               players={players}
               currentDrawerId={room.currentDrawerId}
               hostId={room.hostUserId}
+              teamMode={room.teamMode}
             />
           </div>
 
