@@ -4,13 +4,15 @@ import { Card } from './ui/card'
 import { Input } from './ui/input'
 import { Button } from './ui/button'
 import { Badge } from './ui/badge'
-import { Send, MessageCircle, CheckCircle } from 'lucide-react'
+import { Send, MessageCircle, CheckCircle, Trophy } from 'lucide-react'
+import { toast } from 'sonner'
 
 interface ChatAreaProps {
   roomId: string
   currentWord: string | null
   isDrawer: boolean
   gameState: 'waiting' | 'playing' | 'finished'
+  onCorrectGuess: (playerId: string, points: number) => void
 }
 
 interface GameMessage {
@@ -24,11 +26,12 @@ interface GameMessage {
   createdAt: string
 }
 
-export function ChatArea({ roomId, currentWord, isDrawer, gameState }: ChatAreaProps) {
+export function ChatArea({ roomId, currentWord, isDrawer, gameState, onCorrectGuess }: ChatAreaProps) {
   const [messages, setMessages] = useState<GameMessage[]>([])
   const [newMessage, setNewMessage] = useState('')
   const [user, setUser] = useState<any>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const realtimeChannelRef = useRef<any>(null)
 
   useEffect(() => {
     const unsubscribe = blink.auth.onAuthStateChanged((state) => {
@@ -55,14 +58,51 @@ export function ChatArea({ roomId, currentWord, isDrawer, gameState }: ChatAreaP
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }
 
+  // Set up real-time chat updates
   useEffect(() => {
+    if (!roomId) return
+
+    const setupRealtime = async () => {
+      try {
+        const unsubscribe = await blink.realtime.subscribe(`chat_${roomId}`, (message) => {
+          if (message.type === 'new_message') {
+            loadMessages()
+          } else if (message.type === 'correct_guess') {
+            // Show celebration animation
+            toast.success(`🎉 ${message.data.playerName} guessed correctly!`, {
+              description: `+${message.data.points} points!`
+            })
+            loadMessages()
+          }
+        })
+
+        realtimeChannelRef.current = unsubscribe
+      } catch (error) {
+        console.error('Error setting up chat realtime:', error)
+      }
+    }
+
+    setupRealtime()
     loadMessages()
-    // Set up real-time message updates here
-  }, [loadMessages])
+
+    return () => {
+      if (realtimeChannelRef.current) {
+        realtimeChannelRef.current()
+      }
+    }
+  }, [roomId, loadMessages])
 
   useEffect(() => {
     scrollToBottom()
   }, [messages])
+
+  const calculatePoints = (timeLeft: number, maxTime: number = 60): number => {
+    // Award more points for faster guesses
+    const timeRatio = timeLeft / maxTime
+    const basePoints = 100
+    const timeBonus = Math.floor(timeRatio * 50) // Up to 50 bonus points
+    return Math.max(basePoints + timeBonus, 50) // Minimum 50 points
+  }
 
   const sendMessage = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -79,7 +119,7 @@ export function ChatArea({ roomId, currentWord, isDrawer, gameState }: ChatAreaP
       newMessage.toLowerCase().trim() === currentWord.toLowerCase()
 
     try {
-      await blink.db.gameMessages.create({
+      const messageData = {
         id: `msg_${Date.now()}_${Math.random()}`,
         roomId,
         userId: user.id,
@@ -87,24 +127,54 @@ export function ChatArea({ roomId, currentWord, isDrawer, gameState }: ChatAreaP
         message: newMessage.trim(),
         isGuess,
         isCorrect
-      })
-
-      // If correct guess, award points and potentially end round
-      if (isCorrect) {
-        // Award points logic would go here
-        console.log('Correct guess!')
       }
 
+      await blink.db.gameMessages.create(messageData)
+
+      // If correct guess, award points and notify
+      if (isCorrect) {
+        const points = calculatePoints(60) // Simplified - you could pass actual time left
+        onCorrectGuess(user.id, points)
+
+        // Notify all players about correct guess
+        await blink.realtime.publish(`room_${roomId}`, 'correct_guess', {
+          playerName: messageData.displayName,
+          playerId: user.id,
+          points,
+          word: currentWord
+        })
+
+        // Also notify chat channel
+        await blink.realtime.publish(`chat_${roomId}`, 'correct_guess', {
+          playerName: messageData.displayName,
+          points
+        })
+
+        // Check if round should end (simplified - could check if all players guessed)
+        setTimeout(async () => {
+          await blink.realtime.publish(`room_${roomId}`, 'round_end', {
+            winners: [user.id],
+            correctWord: currentWord
+          })
+        }, 1000)
+      }
+
+      // Notify chat about new message
+      await blink.realtime.publish(`chat_${roomId}`, 'new_message', {
+        messageId: messageData.id,
+        isCorrect
+      })
+
       setNewMessage('')
-      loadMessages()
     } catch (error) {
       console.error('Error sending message:', error)
+      toast.error('Failed to send message')
     }
   }
 
   const getMessageStyle = (message: GameMessage) => {
     if (message.isCorrect) {
-      return 'bg-green-100 border-green-200 text-green-800'
+      return 'bg-green-100 border-green-200 text-green-800 animate-pulse'
     }
     if (message.isGuess) {
       return 'bg-blue-50 border-blue-200'
@@ -114,7 +184,7 @@ export function ChatArea({ roomId, currentWord, isDrawer, gameState }: ChatAreaP
 
   const getMessageIcon = (message: GameMessage) => {
     if (message.isCorrect) {
-      return <CheckCircle className="h-3 w-3 text-green-600" />
+      return <Trophy className="h-3 w-3 text-green-600" />
     }
     if (message.isGuess) {
       return <MessageCircle className="h-3 w-3 text-blue-600" />
@@ -127,8 +197,13 @@ export function ChatArea({ roomId, currentWord, isDrawer, gameState }: ChatAreaP
       <div className="flex items-center gap-2 mb-4">
         <h3 className="font-heading text-lg text-primary">Chat</h3>
         {gameState === 'playing' && !isDrawer && (
-          <Badge variant="outline" className="text-xs">
+          <Badge variant="outline" className="text-xs animate-pulse">
             Type your guesses!
+          </Badge>
+        )}
+        {gameState === 'playing' && isDrawer && (
+          <Badge variant="secondary" className="text-xs">
+            Drawing...
           </Badge>
         )}
       </div>
@@ -138,7 +213,7 @@ export function ChatArea({ roomId, currentWord, isDrawer, gameState }: ChatAreaP
         {messages.map((message) => (
           <div
             key={message.id}
-            className={`p-2 rounded-lg border ${getMessageStyle(message)}`}
+            className={`p-2 rounded-lg border transition-all duration-300 ${getMessageStyle(message)}`}
           >
             <div className="flex items-center gap-2 mb-1">
               {getMessageIcon(message)}
@@ -146,13 +221,20 @@ export function ChatArea({ roomId, currentWord, isDrawer, gameState }: ChatAreaP
                 {message.displayName}
               </span>
               {message.isCorrect && (
-                <Badge variant="default" className="text-xs">
-                  Correct!
+                <Badge variant="default" className="text-xs animate-bounce">
+                  Correct! 🎉
                 </Badge>
               )}
             </div>
             <p className="text-sm">
-              {message.isCorrect ? '🎉 Guessed correctly!' : message.message}
+              {message.isCorrect ? (
+                <span className="flex items-center gap-1">
+                  <CheckCircle className="h-3 w-3" />
+                  Guessed the word correctly!
+                </span>
+              ) : (
+                message.message
+              )}
             </p>
           </div>
         ))}
@@ -163,7 +245,9 @@ export function ChatArea({ roomId, currentWord, isDrawer, gameState }: ChatAreaP
             <p className="text-sm">No messages yet</p>
             <p className="text-xs mt-1">
               {gameState === 'playing' && !isDrawer 
-                ? 'Start guessing!' 
+                ? 'Start guessing the word!' 
+                : gameState === 'playing' && isDrawer
+                ? 'Others are guessing your drawing!'
                 : 'Chat with other players'}
             </p>
           </div>
@@ -186,15 +270,26 @@ export function ChatArea({ roomId, currentWord, isDrawer, gameState }: ChatAreaP
           }
           disabled={isDrawer && gameState === 'playing'}
           className="flex-1"
+          autoComplete="off"
         />
         <Button 
           type="submit" 
           size="sm"
           disabled={!newMessage.trim() || (isDrawer && gameState === 'playing')}
+          className="transition-all hover:scale-105"
         >
           <Send className="h-4 w-4" />
         </Button>
       </form>
+
+      {/* Hint for guessers */}
+      {gameState === 'playing' && !isDrawer && currentWord && (
+        <div className="mt-2 text-center">
+          <p className="text-xs text-muted-foreground">
+            💡 Hint: {currentWord.length} letters
+          </p>
+        </div>
+      )}
     </Card>
   )
 }
